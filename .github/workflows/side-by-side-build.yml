@@ -1,0 +1,108 @@
+name: Side-by-side test build
+
+# Unsigned macOS and Windows test builds named "OpenBot Dev", which install next to the release app
+# and keep their own data. See `electron-builder.side-by-side.cjs`. Nothing is published: the
+# installers are workflow artifacts.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/live-task-updates-sjefvt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: side-by-side-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Build macOS ARM64 test build
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Install and verify native runtimes
+        run: |
+          bun run install:codex-runtime
+          bun run install:claude-runtime
+          bun run install:grok-runtime
+          bun run install:remote-desktop-runtime
+          bun run verify:remote-desktop-runtime
+
+      # On a hosted macOS runner, `hdiutil create` can fail with "Device not configured" or
+      # "Resource busy" when nothing is wrong with the app. Only that error gets another attempt.
+      - name: Build the test build
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/electron-builder-mac.log"
+          for attempt in 1 2 3; do
+            if bun run dist:mac:side-by-side 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            if ! grep -Eq 'hdiutil: create failed - (Device not configured|Resource busy)' "$log"; then
+              exit 1
+            fi
+            echo "::warning::hdiutil could not create the DMG (attempt $attempt of 3)."
+          done
+          exit 1
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: OpenBot-Dev-macOS-arm64
+          path: dist-side-by-side/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Build Windows x64 test build
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Install and verify remote desktop runtime
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun scripts/install-remote-desktop-runtime.ts win32 x64 && bun run verify:remote-desktop-runtime --windows
+
+      - name: Install provider control artifacts
+        run: |
+          bun scripts/install-codex-runtime.ts win32 x64
+          bun scripts/install-claude-runtime.ts win32 x64
+          bun scripts/install-grok-runtime.ts win32 x64
+
+      - name: Build the test installer
+        shell: pwsh
+        run: |
+          bun run dist:win:side-by-side
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: OpenBot-Dev-Windows-x64
+          path: dist-side-by-side/*.exe
+          if-no-files-found: error
+          retention-days: 14

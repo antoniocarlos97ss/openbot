@@ -97,6 +97,7 @@ import { sendToRenderer } from "./renderer-ipc";
 import { RoutineWake } from "./routine-wake";
 import { takeServerModeEnvironment } from "./server-mode";
 import { configureContentSecurityPolicy, configureRendererPermissions } from "./session-configuration";
+import { isSideBySideBuild, SIDE_BY_SIDE_APP_NAME, SIDE_BY_SIDE_APP_USER_MODEL_ID } from "./side-by-side-build";
 import { trustSystemCertificates } from "./system-certificates";
 import { TeardownRegistry } from "./teardown-registry";
 import type { TraceFile } from "./trace-file";
@@ -126,6 +127,7 @@ try {
 }
 
 const commandLineUserDataDirectory = app.commandLine.getSwitchValue("user-data-dir").trim();
+const sideBySide = isSideBySideBuild(app.isPackaged, app.getAppPath());
 const developmentProfile = !app.isPackaged ? readDevelopmentProfile(process.env.OPENBOT_DEV_PROFILE) : null;
 const developmentRemoteRole =
   !app.isPackaged &&
@@ -157,6 +159,8 @@ if (developmentRemoteDebuggingPort) {
 }
 if (commandLineUserDataDirectory) {
   app.setPath("userData", resolve(commandLineUserDataDirectory));
+} else if (sideBySide) {
+  app.setPath("userData", join(app.getPath("appData"), SIDE_BY_SIDE_APP_NAME));
 } else if (!app.isPackaged) {
   app.setPath(
     "userData",
@@ -169,11 +173,15 @@ if (commandLineUserDataDirectory) {
     ),
   );
 }
-app.setName("OpenBot");
+app.setName(sideBySide ? SIDE_BY_SIDE_APP_NAME : "OpenBot");
 app.enableSandbox();
-if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
+if (process.platform === "win32")
+  app.setAppUserModelId(sideBySide ? SIDE_BY_SIDE_APP_USER_MODEL_ID : "app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
-const appVariant = readAppVariant(process.env.OPENBOT_APP_VARIANT, app.isPackaged);
+const appVariant = readAppVariant(
+  process.env.OPENBOT_APP_VARIANT ?? (sideBySide ? "preview" : undefined),
+  app.isPackaged,
+);
 if (!app.isPackaged) guardDevelopmentOutput([process.stdout, process.stderr], () => app.quit());
 const appIconPath = resolveAppIconPath({
   variant: appVariant,
@@ -886,7 +894,7 @@ if (!hasSingleInstanceLock) {
       await Effect.runPromise(
         installLinuxDesktopEntry({ platform: process.platform, environment: process.env, iconPath: appIconPath }),
       );
-      if (process.platform === "darwin" || process.platform === "linux") {
+      if (!sideBySide && (process.platform === "darwin" || process.platform === "linux")) {
         if (!app.setAsDefaultProtocolClient("openbot")) {
           logger.warn("Unable to register the openbot:// scheme. Invitation links will not open OpenBot.");
         }
