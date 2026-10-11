@@ -99,12 +99,13 @@ import type { QueueEditRequest } from "@openbot/contracts/team-protocol/queue-ed
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
 import { classifyFailure } from "@openbot/telemetry";
-import { Deferred, Effect, Exit, Fiber, Result, Schema, Scope, Semaphore } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Result, Schema, Scope, Semaphore } from "effect";
 import { AgentMemories } from "./agent/agent-memories";
 import { AgentRemoval, type AgentRemovalFailed } from "./agent/agent-removal";
 import type { ApprovalAutomationPolicy } from "./agent/approval-automation";
 import { AttachmentGateway } from "./agent/attachment-gateway";
 import { AttentionRegistry, type LocalAttentionResponse } from "./agent/attention-registry";
+import { BackgroundWorkers } from "./agent/background-workers";
 import { BootRecovery } from "./agent/boot-recovery";
 import { BrowserUploads } from "./agent/browser-uploads";
 import type { ChatVisualPreviewHost } from "./agent/chat-visual-preview";
@@ -246,6 +247,18 @@ export interface AgentServiceOptions {
    * default cap, which was the only cap before the setting existed.
    */
   agentMemoryLimit?: () => number;
+  /**
+   * Whether agents can post progress updates during a user turn. The main process owns the
+   * preference. Omitted, off: an agent answers only at the end of its turn.
+   */
+  progressUpdates?: () => boolean;
+  /**
+   * Whether agents can give long tasks to temporary background workers. The main process owns the
+   * preference. Omitted, off.
+   */
+  backgroundWorkers?: () => boolean;
+  /** Where the list of background workers is kept. Omitted, the list stays in memory. */
+  backgroundWorkersFile?: string;
   deleteWithRevokedApproval?: (
     agentId: string,
     remove: () => Effect.Effect<void, AgentRemovalFailed>,
@@ -328,6 +341,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #compaction: ContextCompaction;
   readonly #duplication: DuplicationGate;
   readonly #removal: AgentRemoval;
+  readonly #workers: BackgroundWorkers;
   readonly #tools: OpenBotToolRouter;
   readonly #sidebarLayout: AgentSidebar | null;
   readonly #localSkillTools?: () => LocalSkillTools;
@@ -341,6 +355,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   constructor(options: AgentServiceOptions) {
     super();
+    this.#workers = new BackgroundWorkers(options.backgroundWorkersFile ?? null);
     const {
       store,
       mailbox,
@@ -695,6 +710,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       mcpAuthorization: (config) => this.#mcp.authorization(config).pipe(toMcpOperationError),
       ...(credentials.agentEnvironment ? { agentEnvironment: credentials.agentEnvironment } : {}),
       passwordVaultConnected: () => options.passwordVault?.connected() ?? false,
+      progressUpdates: () => options.progressUpdates?.() ?? false,
+      backgroundWorkers: () => options.backgroundWorkers?.() ?? false,
       hooks: {
         logRecovery: (agentId, provider, outcome) =>
           logger.warn("Recovered an unavailable provider session.", { agentId, provider, outcome }),
@@ -1044,6 +1061,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           lastEventAt: this.#turn.lastEventAt(agentId),
         }),
         requestNoUpdate: (agentId, threadId, turnId) => this.#turn.requestNoUpdate(agentId, threadId, turnId),
+        progressUpdates: () => options.progressUpdates?.() ?? false,
+        backgroundWorkers: () => options.backgroundWorkers?.() ?? false,
+        backgroundWorker: (agentId) => this.#workers.find(agentId),
+        backgroundWorkerCount: (requesterAgentId) => this.#workers.countFor(requesterAgentId),
+        startBackgroundWorker: (input, task, configure) =>
+          this.#startBackgroundWorker(
+            input,
+            task,
+            configure
+              ? (agent) =>
+                  configure(agent).pipe(
+                    Effect.mapError(
+                      (failure) =>
+                        new AgentLifecycleFailed({ operation: "configure background worker", cause: failure.cause }),
+                    ),
+                  )
+              : undefined,
+          ).pipe(toToolOperationFailed),
       },
     });
   }
@@ -1077,7 +1112,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }).bind(this);
 
   listAgents(): AgentSummary[] {
-    return this.#duplication.visibleAgents(this.#store.list());
+    return this.#duplication
+      .visibleAgents(this.#store.list())
+      .map((agent) => (this.#workers.find(agent.id) ? { ...agent, backgroundWorker: true } : agent));
   }
 
   /**
@@ -1180,6 +1217,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   /** The developer instructions state the limit, so a new limit reloads every agent's threads. */
   memoryLimitChanged(): void {
+    for (const agent of this.listAgents()) this.#conversation.unloadAgentThreads(agent.id);
+  }
+
+  /** The instructions say whether to post updates, so each session resumes with the new ones. */
+  progressUpdatesChanged(): void {
     for (const agent of this.listAgents()) this.#conversation.unloadAgentThreads(agent.id);
   }
 
@@ -1615,6 +1657,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error(sourceText("error.agent.initialMessageTooLong"));
       return text;
     });
+    return yield* this.#createAgentThen(input, configure, profileOperationId, (agent) =>
+      this.sendMessage({ agentId: agent.id, text: initialMessage, attachmentDraftIds: [] }, sender).pipe(Effect.asVoid),
+    );
+  }, Effect.uninterruptible).bind(this);
+
+  /** Creates the agent, then runs `start`, its first work. A failed step removes the new agent. */
+  readonly #createAgentThen = Effect.fn("AgentService.createAgentThen")(function* (
+    this: AgentService,
+    input: Omit<CreateAgentInput, "initialMessage">,
+    configure: ((agent: AgentSummary) => Effect.Effect<AgentSummary, AgentLifecycleFailed>) | undefined,
+    profileOperationId: string | undefined,
+    start: (agent: AgentSummary) => Effect.Effect<void, AgentLifecycleFailed>,
+  ) {
     let agent = yield* this.#store
       .createAgent(input, profileOperationId)
       .pipe(
@@ -1625,7 +1680,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         yield* this.#prepareAgentWorkspace(agent);
         agent = yield* this.#assignNewAgentModel(agent, input, true);
         if (configure) agent = yield* configure(agent);
-        yield* this.sendMessage({ agentId: agent.id, text: initialMessage, attachmentDraftIds: [] }, sender);
+        yield* start(agent);
         return this.#store.list().find((candidate) => candidate.id === agent.id) ?? agent;
       }).pipe(
         Effect.catchDefect((cause) => Effect.fail(new AgentLifecycleFailed({ operation: "create agent", cause }))),
@@ -1643,7 +1698,92 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           )
         : result.failure.cause,
     });
-  }, Effect.uninterruptible).bind(this);
+  }, Effect.uninterruptible);
+
+  readonly #startBackgroundWorker = Effect.fn("AgentService.startBackgroundWorker")(function* (
+    this: AgentService,
+    input: Omit<CreateAgentInput, "initialMessage">,
+    task: { requesterAgentId: string; text: string; idempotencyKey: string },
+    configure?: (agent: AgentSummary) => Effect.Effect<AgentSummary, AgentLifecycleFailed>,
+  ) {
+    const started = this.#workers.findByKey(task.idempotencyKey);
+    const existing = started && this.#store.list().find((agent) => agent.id === started.agentId);
+    if (existing) return existing;
+    const agent = yield* this.#createAgentThen(input, configure, undefined, (worker) =>
+      Effect.gen({ self: this }, function* () {
+        const receipt = yield* this.#mailbox
+          .enqueue({
+            sender: { kind: "agent", agentId: task.requesterAgentId },
+            recipientAgentIds: [worker.id],
+            text: task.text,
+            expectsReply: true,
+            idempotencyKey: task.idempotencyKey,
+          })
+          .pipe(
+            Effect.mapError(
+              (failure) => new AgentLifecycleFailed({ operation: "queue background task", cause: failure.cause }),
+            ),
+          );
+        yield* this.#workers
+          .add({
+            agentId: worker.id,
+            requesterAgentId: task.requesterAgentId,
+            taskMessageId: receipt.messageId,
+            idempotencyKey: task.idempotencyKey,
+          })
+          .pipe(
+            Effect.mapError(
+              (failure) => new AgentLifecycleFailed({ operation: "record background worker", cause: failure.cause }),
+            ),
+          );
+      }),
+    ).pipe(Effect.tapError(() => Effect.ignore(this.#workers.removeByKey(task.idempotencyKey))));
+    this.#emit({ type: "agents-changed", agents: this.listAgents() });
+    this.#mailboxSync.emitQueue(agent.id);
+    this.#drain.scheduleDrain(agent.id);
+    return agent;
+  }, Effect.uninterruptible);
+
+  /**
+   * Removes a background worker after its work. A worker that ended with no result tells its
+   * requester first, so the requester does not wait for one. A worker with more work stays.
+   */
+  readonly #retireWorker = Effect.fn("AgentService.retireWorker")(function* (this: AgentService, agentId: string) {
+    const worker = this.#workers.find(agentId);
+    if (!worker) return;
+    if (!this.#store.list().some((agent) => agent.id === agentId)) {
+      yield* this.#workers.remove(agentId);
+      return;
+    }
+    if (this.#mailbox.hasUnfinishedDelivery(agentId) || this.#runsTurn(agentId)) return;
+    const requesterExists = this.#store.list().some((agent) => agent.id === worker.requesterAgentId);
+    if (requesterExists && !this.#mailbox.hasReplyFrom(agentId, worker.taskMessageId)) {
+      yield* this.#mailbox.enqueue({
+        sender: { kind: "agent", agentId },
+        recipientAgentIds: [worker.requesterAgentId],
+        text: "The background task stopped before it had a result. Tell the user, and do the task yourself or start it again if the user wants.",
+        replyToMessageId: worker.taskMessageId,
+        expectsReply: false,
+        idempotencyKey: `background-worker-stopped:${agentId}`,
+      });
+      this.#mailboxSync.emitQueue(worker.requesterAgentId);
+      this.#drain.scheduleDrain(worker.requesterAgentId);
+    }
+    yield* this.#removal.delete(agentId);
+    yield* this.#workers.remove(agentId);
+  });
+
+  #retireWorkerLater(agentId: string): void {
+    if (!this.#workers.find(agentId)) return;
+    Effect.runFork(
+      this.#retireWorker(agentId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.sync(() => this.#emitError("background_worker_removal_failed", Cause.squash(cause), agentId)),
+        ),
+        Effect.forkIn(this.#scope),
+      ),
+    );
+  }
 
   #assignNewAgentModel(agent: AgentSummary, input: Omit<CreateAgentInput, "initialMessage">, needsModel: boolean) {
     return this.#endpoints
@@ -2140,6 +2280,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (failure) => new AgentLifecycleFailed({ operation: "initialize mailbox", cause: failure.cause }),
         ),
       );
+    yield* this.#workers
+      .load()
+      .pipe(
+        Effect.mapError(
+          (failure) => new AgentLifecycleFailed({ operation: "load background workers", cause: failure.cause }),
+        ),
+      );
     yield* lifecycleStep("restore channel links", () => {
       this.#mcp.migrateCatalogBridgesToHttp();
       this.channels.restoreDeliveryLinks();
@@ -2183,6 +2330,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     yield* lifecycleStep("arm routines", () => {
       this.#channelRoutines.reconcileAll();
       this.#routineTimer.arm();
+    });
+    // A worker whose work ended before a restart is removed now; one with queued work runs first.
+    yield* lifecycleStep("retire background workers", () => {
+      for (const worker of this.#workers.list()) this.#retireWorkerLater(worker.agentId);
     });
   }).bind(this);
 
@@ -3073,6 +3224,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #emit(event: AgentEvent): void {
     recordAgentRestartActivity(event);
+    if (event.type === "turn-completed") this.#retireWorkerLater(event.agentId);
     if (this.channels?.event(event) || this.messaging?.event(event, this.#scope)) return;
     this.emit("event", event);
   }

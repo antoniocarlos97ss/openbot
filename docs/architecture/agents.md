@@ -112,6 +112,58 @@ branch refuses them, and no Team API protocol changes.
   service, so the tool router reads it through a getter. The canvas chat panel sends the user's request
   to the open agent's own conversation and shows the answer of the turn that read it.
 
+## Progress updates
+
+`openbot.post_update` lets an agent show a short checkpoint while a user task runs, so the user does
+not wait for the end of the turn to know what happens. It works with every provider, because each
+one receives the same OpenBot tools. It is a setting of the host, off by default. An owner or admin
+turns it on in Server settings > General ("Progress updates while agents work"), for the local server
+or for a connected server. `ProgressUpdatePreferenceStore` in `src/main` keeps the choice on the host
+in `openbot-progress-update-preference-v1.json`, and a file that is missing or invalid reads as off.
+The `hostAdmin` IPC endpoints read and change it; for a remote server they use the admin-only Team
+API capability `host-progress-updates-v1` (`team-protocol/host-progress-updates-v1.ts`), which is
+advertised only to protocol 7 peers. So a GUI that connects to a headless server can change it. The
+web client and the mobile app do not show the row. When it is off, the developer instructions tell
+the agent not to call the tool, and the tool refuses. A change unloads the loaded provider sessions,
+as a memory limit change does, so the next turn resumes with the new instructions. The policy asks for an update only at key
+checkpoints: the plan of a long task, a finding that changes the work, a blocker, or a change of
+direction. When the user steers a message into the running turn, the agent answers it at once with
+an update and continues. The router (`#postUpdate` in `agent/openbot-tool-router.ts`) adds a normal
+assistant message to the running turn, in place in the live snapshot as `html_render` does, so the
+turn-completion write keeps it. The message id comes from the thread, turn and call ids, so a retried
+call adds no second update. Only a turn that holds a user delivery can post one: routine runs and
+teammate work stay quiet until their result, and a channel turn uses channel tools. The update is a
+message of the conversation, so no database schema changes, and every client shows it. It does
+not send a desktop notification: notifications still follow the end of the turn.
+
+## Background workers
+
+`openbot.start_background_task` lets an agent give a long task to a temporary worker, so the chat
+stays free while the work runs. It is the second switch of the host setting above ("Background
+workers", `backgroundWorkers` in the same file and in `host-progress-updates-v1`), off by default.
+When it is on, the developer instructions ask the agent to start a worker for long work, say so in
+one sentence and end its turn. The router (`#startBackgroundTask` in `agent/openbot-tool-router.ts`)
+creates an ordinary agent with the caller's provider, model, reasoning effort, access and Computer
+Use limits, in the caller's sidebar section. `listAgents` marks it `backgroundWorker` (local-only, like
+`access`), and the desktop sidebar hides its row while it works alone: the row shows in "Needs you"
+when the worker waits for the user, and while its chat is open. The Team API projection drops the
+mark, so a host also answers `background-workers-v1` (`route-background-workers.ts`), which lets
+every member read the worker ids. A connected desktop app (`RemoteEventRefresh`) reads them with
+each roster and marks the same workers; a host without the capability, the browser client and the
+iPhone app list a worker as an agent. It then queues
+the task from the caller as a teammate request (`backgroundTaskText` in
+`agent/background-workers.ts` adds what a worker is and how it ends). The result comes back as any
+teammate answer does: the worker's final answer, or its own `send_message` with files. A worker uses
+no new database schema. `BackgroundWorkers` keeps the list of workers in
+`openbot-background-workers-v1.json`, so a restart does not forget them; a file that is missing or
+invalid reads as no workers, and each one is then an ordinary agent. After each turn of a worker
+(`turn-completed`), and once at startup, `AgentService` removes a worker that has no unfinished
+delivery and runs no turn. A worker that ended with no result first sends its requester a notice,
+so the requester does not wait. A worker cannot start a worker, an agent can have at most four, and
+a channel or external conversation turn cannot start one, because the result comes back to the
+agent's own chat. Removal deletes the worker's workspace; a file it sent with `send_message` stays
+with that message.
+
 ## Agent communication policy
 
 The shared developer instructions keep routine teammate exchanges internal by default. Agents

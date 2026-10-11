@@ -258,6 +258,13 @@ export const messages = {
   "server.settings.setUp": "Настроить",
   "server.settings.notifications": "Уведомления",
   "server.settings.muteNotifications": "Отключить уведомления",
+  "server.settings.agentsSection": "Агенты",
+  "server.settings.progressUpdates": "Обновления во время работы агентов",
+  "server.settings.progressUpdatesDescription":
+    "Агенты этого сервера показывают в чате короткие обновления на ключевых шагах долгой задачи и сразу отвечают на перенаправленное сообщение.",
+  "server.settings.backgroundWorkers": "Фоновые исполнители",
+  "server.settings.backgroundWorkersDescription":
+    "Агенты могут передать долгую задачу временному исполнителю и оставаться свободными для разговора. Исполнитель виден на боковой панели во время работы и удаляется, когда отправит результат.",
   "server.settings.muteDescription":
     "Прекратить уведомления на рабочем столе и обновления в вырезе MacBook от этого сервера.",
   "server.settings.mutedUntilDescription": "{until}. Выключите, чтобы включить уведомления сейчас.",

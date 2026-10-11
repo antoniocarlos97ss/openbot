@@ -2,10 +2,11 @@
 
 ## Built-in tool discovery
 
-`agent/tool-catalog.ts` exposes seven direct tools and three discovery tools to every adapter.
+`agent/tool-catalog.ts` exposes eleven direct tools and three discovery tools to every adapter.
 Claude uses its native question tool instead of `ask_user`. The direct tools are `ask_user`,
-`attach_files_to_response`, `list_agents`, `send_message`, `remember`, `forget_memory`, and
-`react_to_user_message`. External plugin registration stays with each provider adapter.
+`attach_files_to_response`, `list_agents`, `send_message`, `search_memories`, `remember`,
+`forget_memory`, `react_to_user_message`, `post_update`, `start_background_task`, and
+`routine_no_update`. External plugin registration stays with each provider adapter.
 
 `tool_search` uses local keyword matching. Exact names come first, then word matches, with stable
 catalog order for ties. It returns five results by default and at most ten. `tool_describe` returns

@@ -11,10 +11,12 @@ import { AGENT_MEMORIES_CODECS } from "./agent-memories-v1";
 import { AGENT_PUBLISH_CODECS } from "./agent-publish-v1";
 import { AGENT_SESSION_SETTINGS_CODECS } from "./agent-session-settings-v1";
 import { AGENT_UPDATE_CODECS } from "./agent-update-v1";
+import { BACKGROUND_WORKERS_CODECS } from "./background-workers-v1";
 import { CONTEXT_RESET_CODECS } from "./context-reset-v1";
 import { EVENTS_CODECS } from "./events-v1";
 import { HOST_ADMIN_CODECS } from "./host-admin-v1";
 import { HOST_MEMBER_UPDATE_CODECS } from "./host-member-update-v1";
+import { HOST_PROGRESS_UPDATES_CODECS } from "./host-progress-updates-v1";
 import { HOST_RELEASE_CODECS } from "./host-release-v1";
 import { HOST_UPDATE_CODECS } from "./host-update-v1";
 import { HOSTED_SITES_CODECS } from "./hosted-sites-v1";
@@ -47,6 +49,8 @@ const CODECS: ReadonlyMap<string, OptionalRouteCodec> = new Map([
   ...AGENT_SESSION_SETTINGS_CODECS,
   ...ACP_REGISTRY_CODECS,
   ...HOST_ADMIN_CODECS,
+  ...HOST_PROGRESS_UPDATES_CODECS,
+  ...BACKGROUND_WORKERS_CODECS,
   ...HOST_UPDATE_CODECS,
   ...HOST_RELEASE_CODECS,
   ...HOST_MEMBER_UPDATE_CODECS,

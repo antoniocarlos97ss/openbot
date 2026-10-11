@@ -27,6 +27,7 @@ import type {
   CentralAuthUser,
   DirectMessageRealtimeEvent,
   DirectTypingRealtimeEvent,
+  ProgressUpdatePreference,
   SidebarLayoutSnapshot,
   TeamPresenceSnapshot,
   UpdateHostIdentityInput,
@@ -189,8 +190,15 @@ export interface TeamApiAdmin {
   providers?: TeamApiProviders;
   /** `host-admin-v1`: the server name and logo. */
   identity?: TeamApiHostIdentity;
+  /** `host-progress-updates-v1`: whether agents post progress updates while they work. */
+  progressUpdates?: TeamApiHostProgressUpdates;
   /** `host-update-v1`: the app update of this computer. Advertised also when the host user turned it off. */
   update?: Pick<RequestedUpdate, "snapshot" | "check" | "start" | "requestWhenIdle" | "cancel" | "changeSettings">;
+}
+
+interface TeamApiHostProgressUpdates {
+  get(): ProgressUpdatePreference;
+  set(preference: ProgressUpdatePreference): Effect.Effect<ProgressUpdatePreference, { readonly cause: unknown }>;
 }
 
 interface TeamApiHostIdentity {

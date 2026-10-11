@@ -5,6 +5,7 @@ import { AGENT_IMPORT_ROUTES } from "./agent-import-v1";
 import { AGENT_INSTALL_ROUTES } from "./agent-install-v1";
 import { AGENT_PUBLISH_ROUTES } from "./agent-publish-v1";
 import { AGENT_UPDATE_ROUTES } from "./agent-update-v1";
+import { BACKGROUND_WORKERS_ROUTES } from "./background-workers-v1";
 import { CONTEXT_RESET_ROUTES } from "./context-reset-v1";
 import {
   legacyTeamCapabilities,
@@ -14,6 +15,7 @@ import {
 } from "./current";
 import { EVENTS_ROUTES } from "./events-v1";
 import { HOST_ADMIN_ROUTES } from "./host-admin-v1";
+import { HOST_PROGRESS_UPDATES_ROUTES } from "./host-progress-updates-v1";
 import { HOST_RELEASE_ROUTES } from "./host-release-v1";
 import { HOST_UPDATE_ROUTES, hostRestartEvent } from "./host-update-v1";
 import { HOSTED_SITES_ROUTES } from "./hosted-sites-v1";
@@ -329,6 +331,30 @@ describe("providers-v3", () => {
     expect(() => codec(routes.codeLoginStart).response(200, { kind: "paste", expiresAt: 1 })).toThrow();
     expect(() => codec(routes.codeLoginSubmit).request({ provider: "claude", code: "x".repeat(2049) })).toThrow();
     expect(() => codec(routes.codeLoginSubmit).request({ provider: "claude" })).toThrow();
+  });
+});
+
+describe("host-progress-updates-v1", () => {
+  it("round-trips the switches and rejects other shapes", () => {
+    const on = { enabled: true, backgroundWorkers: true };
+    expect(codec(HOST_PROGRESS_UPDATES_ROUTES.settings).request({})).toEqual({});
+    expect(codec(HOST_PROGRESS_UPDATES_ROUTES.update).request(on)).toEqual(on);
+    expect(
+      codec(HOST_PROGRESS_UPDATES_ROUTES.settings).response(200, { enabled: false, backgroundWorkers: true, extra: 1 }),
+    ).toEqual({ enabled: false, backgroundWorkers: true });
+    expect(() => codec(HOST_PROGRESS_UPDATES_ROUTES.update).request({ enabled: true })).toThrow();
+    expect(() => codec(HOST_PROGRESS_UPDATES_ROUTES.update).request({ ...on, enabled: "yes" })).toThrow();
+    expect(() => codec(HOST_PROGRESS_UPDATES_ROUTES.settings).response(200, { enabled: false })).toThrow();
+  });
+});
+
+describe("background-workers-v1", () => {
+  it("round-trips the worker ids and rejects other shapes", () => {
+    const route = codec(BACKGROUND_WORKERS_ROUTES.list);
+    expect(route.request({})).toEqual({});
+    expect(route.response(200, { agentIds: ["worker"], extra: 1 })).toEqual({ agentIds: ["worker"] });
+    expect(() => route.response(200, {})).toThrow();
+    expect(() => route.response(200, { agentIds: [""] })).toThrow();
   });
 });
 

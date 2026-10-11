@@ -251,6 +251,13 @@ export const messages = {
   "server.settings.setUp": "Configurar",
   "server.settings.notifications": "Notificações",
   "server.settings.muteNotifications": "Silenciar notificações",
+  "server.settings.agentsSection": "Agentes",
+  "server.settings.progressUpdates": "Atualizações enquanto os agentes trabalham",
+  "server.settings.progressUpdatesDescription":
+    "Os agentes deste servidor mostram atualizações curtas no chat nos passos principais de uma tarefa longa e respondem na hora a uma mensagem redirecionada.",
+  "server.settings.backgroundWorkers": "Workers em segundo plano",
+  "server.settings.backgroundWorkersDescription":
+    "Os agentes podem passar uma tarefa longa para um worker temporário e continuar livres para conversar. O worker aparece na barra lateral enquanto trabalha e é removido quando envia o resultado.",
   "server.settings.muteDescription":
     "Interrompa as notificações da área de trabalho e as atualizações no recorte da tela do MacBook deste servidor.",
   "server.settings.mutedUntilDescription": "{until}. Desative para reativar as notificações agora.",

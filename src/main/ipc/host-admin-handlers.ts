@@ -11,6 +11,7 @@ import type { RemoteWorkflowError } from "../remote-service-effects";
 
 import {
   decodeHostUpdateStatus,
+  decodeProgressUpdatePreference,
   type HostUpdateSettingsChange,
   type HostUpdateStatus,
   LOCAL_SERVER_ID,
@@ -22,13 +23,18 @@ import {
 import { isOneOf } from "@openbot/contracts/runtime-values";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import { HOST_ADMIN_CAPABILITY, HOST_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/host-admin-v1";
+import {
+  HOST_PROGRESS_UPDATES_CAPABILITY,
+  HOST_PROGRESS_UPDATES_ROUTES,
+} from "@openbot/contracts/team-protocol/host-progress-updates-v1";
 import { HOST_UPDATE_CAPABILITY, HOST_UPDATE_ROUTES } from "@openbot/contracts/team-protocol/host-update-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import type { HostService } from "../host-service";
+import type { ProgressUpdateSettings } from "../progress-update-preference-store";
 import { acceptEmpty, decodeHostReleaseStatusFromHost, type ResponseDecoder } from "../remote-host-decoding";
 import type { RemoteRequestInit } from "../remote-server-client";
-import { parseHostUpdateSettings } from "./app-inputs";
+import { parseHostUpdateSettings, parseProgressUpdatePreference } from "./app-inputs";
 import type { IpcGroupHandlers } from "./define-ipc-group";
 import { scopedHandler, scopedQueryHandler } from "./scoped-handler";
 import { parseHostIdentity } from "./server-inputs";
@@ -49,6 +55,7 @@ interface HostAdminRemoteServers {
 interface HostAdminIpcDependencies {
   host: Pick<HostService, "updateIdentity">;
   remoteServers: HostAdminRemoteServers;
+  progressUpdates: ProgressUpdateSettings;
 }
 
 /** The body of a `host-update-v1` route: `start` carries the mode, `settings` the switches. */
@@ -57,6 +64,7 @@ type HostUpdateBody = Record<string, never> | { restart: UpdateRestartMode } | H
 export function hostAdminIpcHandlers({
   host,
   remoteServers,
+  progressUpdates,
 }: HostAdminIpcDependencies): Pick<IpcGroupHandlers, "hostAdmin"> {
   function remoteUpdate(serverId: string, route: string, body: HostUpdateBody): Promise<HostUpdateStatus> {
     const role = remoteServers.list().find((server) => server.id === serverId)?.role;
@@ -69,6 +77,13 @@ export function hostAdminIpcHandlers({
     if (!remoteServers.supportsCapability(serverId, HOST_UPDATE_CAPABILITY))
       throw new Error(sourceText("error.team.hostUpdateUnsupported"));
     return runCauseEffect(remoteServers.request(serverId, route, decodeHostUpdateStatus, { method: "POST", body }));
+  }
+  function remoteProgressUpdates(serverId: string, route: string, body: { enabled?: boolean }) {
+    if (!remoteServers.supportsCapability(serverId, HOST_PROGRESS_UPDATES_CAPABILITY))
+      throw new Error(sourceText("error.team.progressUpdatesUnsupported"));
+    return runCauseEffect(
+      remoteServers.request(serverId, route, decodeProgressUpdatePreference, { method: "POST", body }),
+    );
   }
   // This computer updates from Settings. The renderer shows the tab for a joined server only.
   const localUpdate = (): never => {
@@ -141,6 +156,15 @@ export function hostAdminIpcHandlers({
       setUpdateSettings: scopedHandler(parseHostUpdateSettings, {
         local: localUpdate,
         remote: (settings, serverId) => remoteUpdate(serverId, HOST_UPDATE_ROUTES.settings, settings),
+      }),
+      getProgressUpdates: scopedQueryHandler({
+        local: async () => progressUpdates.get(),
+        remote: (serverId) => remoteProgressUpdates(serverId, HOST_PROGRESS_UPDATES_ROUTES.settings, {}),
+      }),
+      setProgressUpdates: scopedHandler(parseProgressUpdatePreference, {
+        local: (preference) => runCauseEffect(progressUpdates.set(preference)),
+        remote: (preference, serverId) =>
+          remoteProgressUpdates(serverId, HOST_PROGRESS_UPDATES_ROUTES.update, preference),
       }),
     },
   };

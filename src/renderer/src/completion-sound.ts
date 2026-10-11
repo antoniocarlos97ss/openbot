@@ -5,7 +5,7 @@ const COMPLETION_SOUND_DURATION_SECONDS = 0.22;
 
 let completionAudioContext: AudioContext | undefined;
 
-type NotificationAgent = Pick<AgentSummary, "id" | "notifications">;
+type NotificationAgent = Pick<AgentSummary, "id" | "notifications" | "backgroundWorker">;
 type PreferenceStorage = Pick<Storage, "getItem">;
 
 /** The choice for this page after the browser did not save it. It wins over an older saved value. */
@@ -42,7 +42,8 @@ export function shouldPlayCompletionSound(
   // A quiet routine run posted nothing, so it has no reply to announce.
   if (event.type !== "turn-completed" || event.status !== "completed" || event.quiet) return false;
   if (!isCompletionSoundEnabled(storage)) return false;
-  return agents.some((agent) => agent.id === event.agentId && agent.notifications);
+  // A background worker's result reaches the user through its requester, which plays the sound.
+  return agents.some((agent) => agent.id === event.agentId && agent.notifications && !agent.backgroundWorker);
 }
 
 export function playCompletionSoundForAgentEvent(

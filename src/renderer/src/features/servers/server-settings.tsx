@@ -3,6 +3,7 @@ import type {
   InviteSummary,
   McpServerConfig,
   McpTestResult,
+  ProgressUpdatePreference,
   ServerSummary,
   TeamInviteSummary,
   TeamPresenceMember,
@@ -59,6 +60,9 @@ const ServerSettings = createSimpleContext({
     const [serverSettingsError, setServerSettingsError] = createSignal<string | null>(null);
     const [serverSettingsMcp, setServerSettingsMcp] = createSignal<McpServerConfig[]>([]);
     const [serverSettingsMcpError, setServerSettingsMcpError] = createSignal<string | null>(null);
+    /** Null while unread, and for a server whose switch this window cannot change. */
+    const [serverSettingsProgressUpdates, setServerSettingsProgressUpdates] =
+      createSignal<ProgressUpdatePreference | null>(null);
     /** Which http rows the server holds a sign-in for, by id. Empty for a host without `mcp-sign-in-v1`. */
     const [serverSettingsMcpSignIns, setServerSettingsMcpSignIns] = createSignal<Record<string, boolean>>({});
     /** The host tab of each remote sign-in page, by the address it signs in to, while the sign-in waits. */
@@ -130,10 +134,16 @@ const ServerSettings = createSimpleContext({
         const canManage = server.kind === "local" ? hostStatus().configured : serverRoleCanAdminister(server);
         const canUseNetwork = server.kind === "local" || server.state === "online";
         const admin = serverAdminPort(server);
-        const [presence, members, invites] = await Promise.all([
+        const [presence, members, invites, progressUpdates] = await Promise.all([
           admin.getPresence(),
           canManage && canUseNetwork ? admin.listMembers() : Promise.resolve(null),
           canManage && canUseNetwork ? admin.listInvites() : Promise.resolve([]),
+          // A failed read hides the row: the rest of the panel does not depend on it.
+          canUseNetwork && serverCanAdminister(server, "host-progress-updates-v1")
+            ? serversPort()
+                .hostAdmin.getProgressUpdates(serverId)
+                .catch(() => null)
+            : Promise.resolve(null),
         ]);
         if (request !== serverSettingsRequest || serverSettingsTargetId() !== serverId) return;
         const presenceById = new Map(presence.members.map((member) => [member.id, member]));
@@ -145,6 +155,7 @@ const ServerSettings = createSimpleContext({
           })),
         );
         setServerSettingsInvites(invites);
+        setServerSettingsProgressUpdates(progressUpdates);
         if (identityError) setServerSettingsError(identityError);
       } catch (error) {
         if (request === serverSettingsRequest && serverSettingsTargetId() === serverId) {
@@ -172,6 +183,7 @@ const ServerSettings = createSimpleContext({
       setServerSettingsMcp([]);
       setServerSettingsMcpError(null);
       setServerSettingsMcpSignIns({});
+      setServerSettingsProgressUpdates(null);
       setServerSettingsError(null);
       void refreshServerSettings(serverId);
     }
@@ -211,6 +223,13 @@ const ServerSettings = createSimpleContext({
         }
         throw error;
       }
+    }
+
+    async function setServerProgressUpdates(preference: ProgressUpdatePreference): Promise<void> {
+      const server = serverSettingsTarget();
+      if (!server) throw new Error(currentText().t("server.settings.unavailable"));
+      const saved = await serversPort().hostAdmin.setProgressUpdates(preference, server.id);
+      if (serverSettingsTargetId() === server.id) setServerSettingsProgressUpdates(saved);
     }
 
     /**
@@ -575,6 +594,8 @@ const ServerSettings = createSimpleContext({
       saveServerIdentity,
       recheckScreenRecording,
       setServerPublished,
+      serverSettingsProgressUpdates,
+      setServerProgressUpdates,
       createServerInvite,
       updateServerMember,
       removeServerMember,

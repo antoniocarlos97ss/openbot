@@ -325,6 +325,8 @@ function ServerSettings(props: {
     setServerSettingsOpen,
     serverSettingsRestoreTarget,
     serverSettingsMembers,
+    serverSettingsProgressUpdates,
+    setServerProgressUpdates,
     serverSettingsInvites,
     serverSettingsLoading,
     serverSettingsError,
@@ -542,6 +544,10 @@ function ServerSettings(props: {
           onSetPublished={setServerPublished}
           onSetMuted={(muted) => setServerMuted(server().id, muted)}
           onSetNotificationLevel={(level) => setServerNotificationLevel(server().id, level)}
+          progressUpdates={(() => {
+            const preference = serverSettingsProgressUpdates();
+            return preference ? { preference, onChange: setServerProgressUpdates } : undefined;
+          })()}
           onCreateInvite={createServerInvite}
           onUpdateMember={updateServerMember}
           onRemoveMember={removeServerMember}

@@ -47,6 +47,7 @@ export function serverSupportsCapability(
       capability === "agent-session-settings-v1" ||
       capability === "acp-registry-v1" ||
       capability === "host-admin-v1" ||
+      capability === "host-progress-updates-v1" ||
       capability === "host-update-v1" ||
       capability === "host-member-update-v1" ||
       capability === "host-release-v1" ||

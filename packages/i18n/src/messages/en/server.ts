@@ -254,6 +254,13 @@ export const messages = defineMessages("server", {
   "server.settings.setUp": "Set up",
   "server.settings.notifications": "Notifications",
   "server.settings.muteNotifications": "Mute notifications",
+  "server.settings.agentsSection": "Agents",
+  "server.settings.progressUpdates": "Progress updates while agents work",
+  "server.settings.progressUpdatesDescription":
+    "Agents on this server show short updates in the chat at key steps of a long task, and answer a redirected message at once.",
+  "server.settings.backgroundWorkers": "Background workers",
+  "server.settings.backgroundWorkersDescription":
+    "Agents can give a long task to a temporary worker and stay free to talk. The worker shows in the sidebar while it works and is removed when it sends its result.",
   "server.settings.muteDescription": "Stop desktop notifications and MacBook notch updates from this server.",
   "server.settings.mutedUntilDescription": "{until}. Turn off to unmute now.",
   "server.settings.notifyAbout": "Notify me about",

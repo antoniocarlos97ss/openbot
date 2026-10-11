@@ -15,10 +15,11 @@
 // The fallback path is for hosts too old to replay events on connect. It reads the whole agent list
 // and one page each, which is expensive, so it runs once per connection rather than per event.
 
-import type { AgentEvent } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentSummary } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { BACKGROUND_WORKERS_ROUTES } from "@openbot/contracts/team-protocol/background-workers-v1";
 import { Deferred, Effect, Result } from "effect";
-import { decodeAgentSummaries, decodeQueueSnapshot } from "./remote-agent-decoding";
+import { decodeAgentSummaries, decodeBackgroundWorkerIds, decodeQueueSnapshot } from "./remote-agent-decoding";
 import { decodeConversationPageFromHost } from "./remote-conversation-decoding";
 import type { RemoteRequestFn } from "./remote-server-client";
 import { addRemotePreviewUrls, pageQuery } from "./remote-server-urls";
@@ -46,6 +47,8 @@ export interface RemoteEventRefreshOptions {
   /** False once the user removes a server. A refetch in flight for it stops emitting. */
   hasServer: (serverId: string) => boolean;
   emit: (serverId: string, event: AgentEvent, bufferedLive?: boolean) => void;
+  /** Whether the host lists its background workers (`background-workers-v1`). */
+  listsWorkers: (serverId: string) => boolean;
 }
 
 export class RemoteEventRefresh {
@@ -56,11 +59,18 @@ export class RemoteEventRefresh {
   readonly #queues = new Map<string, QueueRefresh>();
   readonly #generations = new Map<string, number>();
   readonly #rosterLoads = new Map<string, Deferred.Deferred<void, RemoteWorkflowError>>();
+  readonly #listsWorkers: (serverId: string) => boolean;
+  // The host's background workers, the last read of them that started, and the last roster sent,
+  // so that the roster goes out again when a later read finds other workers.
+  readonly #workerIds = new Map<string, ReadonlySet<string>>();
+  readonly #workerReads = new Map<string, number>();
+  readonly #rosters = new Map<string, AgentSummary[]>();
 
   constructor(options: RemoteEventRefreshOptions) {
     this.#request = options.request;
     this.#hasServer = options.hasServer;
     this.#emit = options.emit;
+    this.#listsWorkers = options.listsWorkers;
   }
 
   /**
@@ -82,7 +92,8 @@ export class RemoteEventRefresh {
       yield* this.#refreshQueue(serverId, event.agentId);
     } else {
       const remoteEvent = addRemotePreviewUrls(event, serverId);
-      if (bufferedLive) this.#emit(serverId, remoteEvent, true);
+      if (remoteEvent.type === "agents-changed") yield* this.#emitRoster(serverId, remoteEvent.agents, bufferedLive);
+      else if (bufferedLive) this.#emit(serverId, remoteEvent, true);
       else this.#emit(serverId, remoteEvent);
     }
   }).bind(this);
@@ -100,7 +111,7 @@ export class RemoteEventRefresh {
     const request = { request: this.#request };
     const agents = yield* request.request(serverId, TEAM_API_ROUTES.agents.all, decodeAgentSummaries);
     if (this.#generations.get(serverId) !== generation) return;
-    this.#emit(serverId, { type: "agents-changed", agents });
+    yield* this.#emitRoster(serverId, agents);
     yield* Effect.forEach(
       agents,
       (agent) =>
@@ -133,7 +144,7 @@ export class RemoteEventRefresh {
     yield* Effect.gen({ self: this }, function* () {
       const agents = yield* this.#request(serverId, TEAM_API_ROUTES.agents.all, decodeAgentSummaries);
       if (this.#rosterLoads.get(serverId) !== operation || !this.#hasServer(serverId)) return;
-      this.#emit(serverId, { type: "agents-changed", agents });
+      yield* this.#emitRoster(serverId, agents);
     }).pipe(
       Effect.onExit((exit) => Deferred.done(operation, exit)),
       Effect.ensuring(
@@ -144,8 +155,21 @@ export class RemoteEventRefresh {
     );
   }).bind(this);
 
+  /** A roster read outside the event stream, with the host's background workers marked. */
+  readonly markWorkers = Effect.fn("RemoteEvents.markWorkers")(function* (
+    this: RemoteEventRefresh,
+    serverId: string,
+    agents: AgentSummary[],
+  ) {
+    yield* this.#readWorkers(serverId);
+    return this.#markedWorkers(serverId, agents);
+  }).bind(this);
+
   forget(serverId: string): void {
     this.#rosterLoads.delete(serverId);
+    this.#workerIds.delete(serverId);
+    this.#workerReads.delete(serverId);
+    this.#rosters.delete(serverId);
     this.#generations.delete(serverId);
     for (const key of this.#conversations.keys()) {
       if (key.startsWith(`${serverId}\0`)) this.#conversations.delete(key);
@@ -157,6 +181,9 @@ export class RemoteEventRefresh {
 
   clear(): void {
     this.#rosterLoads.clear();
+    this.#workerIds.clear();
+    this.#workerReads.clear();
+    this.#rosters.clear();
     this.#generations.clear();
     this.#conversations.clear();
     this.#queues.clear();
@@ -253,6 +280,49 @@ export class RemoteEventRefresh {
    * Marks everything in flight as belonging to a previous session. A response that started before
    * this call will notice and stay quiet.
    */
+  /**
+   * Sends a roster at once with the workers known so far marked, as the local host marks its own,
+   * so the roster keeps its place among the events. When the read that follows finds other workers,
+   * the same roster goes out again, unless a newer one went out in the meantime.
+   */
+  readonly #emitRoster = Effect.fn("RemoteEvents.emitRoster")(function* (
+    this: RemoteEventRefresh,
+    serverId: string,
+    agents: AgentSummary[],
+    bufferedLive = false,
+  ) {
+    this.#rosters.set(serverId, agents);
+    const send = () => {
+      const event: AgentEvent = { type: "agents-changed", agents: this.#markedWorkers(serverId, agents) };
+      if (bufferedLive) this.#emit(serverId, event, true);
+      else this.#emit(serverId, event);
+    };
+    send();
+    if ((yield* this.#readWorkers(serverId)) && this.#rosters.get(serverId) === agents) send();
+  });
+
+  /** Reads the host's workers. True when they changed. A failed or older read keeps the last ones. */
+  readonly #readWorkers = Effect.fn("RemoteEvents.readWorkers")(function* (this: RemoteEventRefresh, serverId: string) {
+    if (!this.#listsWorkers(serverId)) return false;
+    const read = (this.#workerReads.get(serverId) ?? 0) + 1;
+    this.#workerReads.set(serverId, read);
+    const ids = yield* this.#request(serverId, BACKGROUND_WORKERS_ROUTES.list, decodeBackgroundWorkerIds, {
+      method: "POST",
+      body: {},
+    }).pipe(Effect.catch(() => Effect.succeed(null)));
+    if (ids === null || this.#workerReads.get(serverId) !== read || !this.#hasServer(serverId)) return false;
+    const previous = this.#workerIds.get(serverId) ?? new Set<string>();
+    const next = new Set(ids);
+    this.#workerIds.set(serverId, next);
+    return next.size !== previous.size || ids.some((id) => !previous.has(id));
+  });
+
+  #markedWorkers(serverId: string, agents: AgentSummary[]): AgentSummary[] {
+    const ids = this.#workerIds.get(serverId);
+    if (!ids?.size) return agents;
+    return agents.map((agent) => (ids.has(agent.id) ? { ...agent, backgroundWorker: true } : agent));
+  }
+
   #advance(serverId: string): number {
     const generation = (this.#generations.get(serverId) ?? 0) + 1;
     this.#generations.set(serverId, generation);

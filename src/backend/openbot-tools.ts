@@ -57,6 +57,33 @@ export const htmlRenderToolSchema = z.object({
     ),
 });
 
+/** The longest progress update: a checkpoint is a sentence or two, never the report. */
+const POST_UPDATE_TEXT_LIMIT = 1_000;
+
+export const postUpdateToolSchema = z.object({
+  text: z
+    .string()
+    .trim()
+    .min(1)
+    .max(POST_UPDATE_TEXT_LIMIT)
+    .describe("One or two short sentences in the user's language."),
+});
+
+export const startBackgroundTaskToolSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(40)
+    .describe("A short name for the worker in the user's language, such as Market research."),
+  task: z
+    .string()
+    .trim()
+    .min(1)
+    .max(20_000)
+    .describe("The complete task with all the context the worker needs: it does not read your chat."),
+});
+
 const CHAT_VISUAL_PREVIEW_MIN_WIDTH = 240;
 const CHAT_VISUAL_PREVIEW_MAX_WIDTH = 1_600;
 /** The width of the reply column in a desktop chat. */
@@ -312,6 +339,18 @@ export const OPENBOT_TOOL_DEFINITIONS: readonly OpenBotToolDefinition[] = [
           "The plugin slug: its name in lower case with hyphens, such as notion or linear. Use github for GitHub.",
         ),
     },
+  },
+  {
+    name: "post_update",
+    description:
+      "While you work on a task for the user, show a short progress update in the chat now, without ending your turn. Use it only at key checkpoints: what you will do on a long task, a finding that changes the work, a blocker, a change of direction, or an answer to a user message that arrived during your work. Do not use it for each step, and do not repeat it in the final answer.",
+    shape: postUpdateToolSchema.shape,
+  },
+  {
+    name: "start_background_task",
+    description:
+      "Give a long task to a new temporary worker that runs in the background, so your chat stays free. The worker gets your provider, model and access, and shows in the sidebar while it works. Its result comes back to you as a teammate answer, and OpenBot then removes the worker. Returns the worker's agent id.",
+    shape: startBackgroundTaskToolSchema.shape,
   },
   {
     name: "react_to_user_message",

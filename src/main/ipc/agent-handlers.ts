@@ -36,6 +36,7 @@ import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { CONTEXT_RESET_CAPABILITY, CONTEXT_RESET_ROUTES } from "@openbot/contracts/team-protocol/context-reset-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
+import { Effect } from "effect";
 import { duplicateAgentIntoLayout } from "../../backend/agent/duplication-gate";
 import type { AgentService } from "../../backend/agent-service";
 import { runCauseEffect } from "../../backend/effect-boundary";
@@ -215,7 +216,11 @@ export function agentIpcHandlers({
       listAgents: scopedQueryHandler({
         local: () => service.listAgents(),
         remote: (serverId) =>
-          runCauseEffect(remoteServers.request(serverId, TEAM_API_ROUTES.agents.all, decodeAgentSummaries)),
+          runCauseEffect(
+            remoteServers
+              .request(serverId, TEAM_API_ROUTES.agents.all, decodeAgentSummaries)
+              .pipe(Effect.flatMap((agents) => remoteServers.markBackgroundWorkers(serverId, agents))),
+          ),
       }),
       listInstalledSkills: scopedHandler(parseAgentId, {
         local: (agentId) => runCauseEffect(skills.listInstalledForChatTags(agentId)),

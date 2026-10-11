@@ -252,6 +252,13 @@ export const messages = {
   "server.settings.setUp": "Skonfiguruj",
   "server.settings.notifications": "Powiadomienia",
   "server.settings.muteNotifications": "Wycisz powiadomienia",
+  "server.settings.agentsSection": "Agenci",
+  "server.settings.progressUpdates": "Postępy podczas pracy agentów",
+  "server.settings.progressUpdatesDescription":
+    "Agenci na tym serwerze pokazują na czacie krótkie informacje w kluczowych krokach długiego zadania i od razu odpowiadają na przekierowaną wiadomość.",
+  "server.settings.backgroundWorkers": "Pracownicy w tle",
+  "server.settings.backgroundWorkersDescription":
+    "Agenci mogą przekazać długie zadanie tymczasowemu pracownikowi i nadal rozmawiać. Pracownik jest widoczny na pasku bocznym podczas pracy i znika po wysłaniu wyniku.",
   "server.settings.muteDescription":
     "Zatrzymaj powiadomienia na pulpicie i aktualizacje w wycięciu MacBooka z tego serwera.",
   "server.settings.mutedUntilDescription": "{until}. Wyłącz, aby od razu przywrócić dźwięk.",

@@ -21,6 +21,7 @@ import {
   decodeMcpSignInStates,
   decodeMcpTestResult,
   decodeOptionalStorageUsage,
+  decodeProgressUpdatePreference,
   decodeProviderHostSignInStatus,
   decodeRegistryEntries,
   decodeRegistryInstallations,
@@ -723,6 +724,8 @@ const openbotApi: OpenBotDesktopApi = {
     startUpdate: decodeHostUpdateStatus,
     cancelUpdate: decodeHostUpdateStatus,
     setUpdateSettings: decodeHostUpdateStatus,
+    getProgressUpdates: decodeProgressUpdatePreference,
+    setProgressUpdates: decodeProgressUpdatePreference,
   }),
   agentImport: bridgeGroup(IPC_ENDPOINTS.agentImport, {
     choose: decodeAgentImportPreview,

@@ -116,6 +116,15 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
     });
   });
 
+  /* A background worker works alone, so its row stays out of the list. It shows in "Needs you" when
+   * it waits for the user, and while its chat is open. */
+  const sidebarAgents = createMemo(() =>
+    agentList().filter(
+      (agent) =>
+        !agent.backgroundWorker || sidebarAgentStates()[agent.id]?.kind === "waiting" || agent.id === activeAgent()?.id,
+    ),
+  );
+
   /* The badge says what an agent is doing; the face says how it is going. `isAgentWorking` is
    * shared, and a routine mark only replaces the badge for that same agent. */
   const agentMoods = createMemo(() =>
@@ -145,7 +154,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
         void markAllAgentMessagesRead();
         void channels.markAllRead();
       }}
-      hasUnread={agentList().some((agent) => (unreadReplies()[agent.id] ?? 0) > 0) || channels.hasUnread()}
+      hasUnread={sidebarAgents().some((agent) => (unreadReplies()[agent.id] ?? 0) > 0) || channels.hasUnread()}
       view={layout.sidebarView()}
       onViewChange={(view) => {
         // An open channel would stay in the middle with no row in the list.
@@ -170,7 +179,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
             }
           : undefined
       }
-      agents={agentList()}
+      agents={sidebarAgents()}
       activeAgentId={activeDirectMember() || channels.state.selectedId ? "" : (activeAgent()?.id ?? "")}
       showPeople={props.peopleEnabled}
       people={directPeople()}

@@ -16,6 +16,12 @@ export function visualReplyMessageId(threadId: string, turnId: string, callId: s
   return `visual-reply:${digest}`;
 }
 
+/** The id of the message that one `post_update` call adds, so a retried call adds no second update. */
+export function progressUpdateMessageId(threadId: string, turnId: string, callId: string): string {
+  const digest = createHash("sha256").update(`${threadId}\0${turnId}\0${callId}`).digest("hex").slice(0, 32);
+  return `progress-update:${digest}`;
+}
+
 /** A file name from a page title, without the characters that file systems refuse. */
 export function visualReplyFileName(title: string): string {
   return (

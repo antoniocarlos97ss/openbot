@@ -39,6 +39,7 @@ import {
   DEFAULT_APPROVAL_AUTOMATION_PREFERENCE,
   DEFAULT_BUSY_MESSAGE_MODE,
   DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
+  DEFAULT_PROGRESS_UPDATE_PREFERENCE,
   DEFAULT_PROVIDER_DETECTION_SETTINGS,
   DEFAULT_REMOTE_SESSION_REUSE_PREFERENCE,
   type DirectConversationSnapshot,
@@ -56,6 +57,7 @@ import {
   type OpenBotDesktopApi,
   type OpenSharedFileInput,
   type OpenWorkspaceFileInput,
+  type ProgressUpdatePreference,
   type ProviderDetectionSettings,
   type QueueDelivery,
   type QueuedMessageReceipt,
@@ -253,6 +255,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let approvalAutomation = clone<ApprovalAutomationPreference>(DEFAULT_APPROVAL_AUTOMATION_PREFERENCE);
   let busyMessageMode: BusyMessageModePreference = { mode: DEFAULT_BUSY_MESSAGE_MODE };
   let agentMemoryLimit: AgentMemoryLimitPreference = { limit: DEFAULT_AGENT_MEMORY_LIMIT };
+  let progressUpdates: ProgressUpdatePreference = { ...DEFAULT_PROGRESS_UPDATE_PREFERENCE };
   let remoteSessionReuse: RemoteSessionReusePreference = { ...DEFAULT_REMOTE_SESSION_REUSE_PREFERENCE };
   let languagePreference = clone<AppLanguagePreference>(options.languagePreference ?? { language: "system" });
   const languageListeners = new Set<(preference: AppLanguagePreference) => void>();
@@ -1965,6 +1968,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         return server;
       },
       ...createMockHostUpdate(options),
+      getProgressUpdates: async () => clone(progressUpdates),
+      setProgressUpdates: async (preference) => {
+        progressUpdates = clone(preference);
+        return clone(progressUpdates);
+      },
     },
     storage: createMockStorage(),
     agentImport: {

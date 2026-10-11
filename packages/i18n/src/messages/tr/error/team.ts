@@ -70,6 +70,7 @@ export const messages = {
   "error.team.skillsUnsupported": "Beceriler bu bağlantı tarafından desteklenmiyor.",
   "error.team.hostIdentityUnsupported": "Sunucu kimliği değişiklikleri bu bağlantı tarafından desteklenmiyor.",
   "error.team.hostUpdateUnsupported": "Ana makine güncellemeleri bu bağlantı tarafından desteklenmiyor.",
+  "error.team.progressUpdatesUnsupported": "Bu bağlantı ilerleme güncellemesi ayarlarını desteklemiyor.",
   "error.team.attachmentNameRequired": "Güvenli bir ek adı gereklidir.",
   "error.team.attachmentNotFound": "Ek bulunamadı.",
   "error.team.sharedFileTooLarge": "Paylaşılan dosya 100 MB sınırını aşıyor.",

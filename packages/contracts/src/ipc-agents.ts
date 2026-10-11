@@ -99,6 +99,11 @@ export interface AgentSummary {
    * app default.
    */
   busyMessageMode?: BusyMessageMode;
+  /**
+   * True for a temporary background worker that another agent started. Local-only, like `access`:
+   * the desktop sidebar hides the worker while it works alone. Absent means an ordinary agent.
+   */
+  backgroundWorker?: boolean;
   threadId: string | null;
   workspacePath: string;
   preview: string;
@@ -132,6 +137,7 @@ export function isAgentSummary(value: unknown): value is AgentSummary {
     (value.computerUse === undefined || isBoolean(value.computerUse)) &&
     (value.allowAutomation === undefined || isBoolean(value.allowAutomation)) &&
     (value.busyMessageMode === undefined || isBusyMessageMode(value.busyMessageMode)) &&
+    (value.backgroundWorker === undefined || isBoolean(value.backgroundWorker)) &&
     (value.threadId === null || isIdentifier(value.threadId)) &&
     isBoundedString(value.workspacePath, INPUT_LIMITS.path) &&
     isBoundedString(value.preview, INPUT_LIMITS.messageText) &&

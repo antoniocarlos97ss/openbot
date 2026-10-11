@@ -906,6 +906,51 @@ describe("Team API host-admin-v1", () => {
   });
 });
 
+describe("Team API host-progress-updates-v1", () => {
+  it("lets only an admin read and change progress updates and background workers on the host", async () => {
+    let preference = { enabled: false, backgroundWorkers: false };
+    const progressUpdates = {
+      get: () => preference,
+      set: (next: { enabled: boolean; backgroundWorkers: boolean }) =>
+        Effect.sync(() => {
+          preference = next;
+          return preference;
+        }),
+    };
+    const { admin, asMember, post } = await signedIn("host-progress-updates", { admin: { progressUpdates } });
+    const withCapability = { ...admin, "OpenBot-Capabilities": "host-progress-updates-v1" };
+    const memberWithCapability = { ...asMember, "OpenBot-Capabilities": "host-progress-updates-v1" };
+    const on = { enabled: true, backgroundWorkers: true };
+
+    expect((await post("/v1/admin/host/progress-updates", {})).status).toBe(400);
+    expect((await post("/v1/admin/host/progress-updates/update", on, memberWithCapability)).status).toBe(403);
+    expect((await post("/v1/admin/host/progress-updates/update", { enabled: true }, withCapability)).status).toBe(400);
+    expect(preference).toEqual({ enabled: false, backgroundWorkers: false });
+
+    expect(await (await post("/v1/admin/host/progress-updates", {}, withCapability)).json()).toEqual({
+      enabled: false,
+      backgroundWorkers: false,
+    });
+    expect(await (await post("/v1/admin/host/progress-updates/update", on, withCapability)).json()).toEqual(on);
+    expect(preference).toEqual(on);
+  });
+});
+
+describe("Team API background-workers-v1", () => {
+  it("lets every member read the host's background workers", async () => {
+    const worker = { ...CHIEF, id: "worker", name: "Worker", backgroundWorker: true };
+    const { asMember, post } = await signedIn("background-workers", {
+      agents: createAgents({ listAgents: () => [CHIEF, worker] }),
+    });
+    const withCapability = { ...asMember, "OpenBot-Capabilities": "background-workers-v1" };
+
+    expect((await post("/v1/host/background-workers", {}, asMember)).status).toBe(404);
+    expect(await (await post("/v1/host/background-workers", {}, withCapability)).json()).toEqual({
+      agentIds: ["worker"],
+    });
+  });
+});
+
 describe("Team API host-update-v1", () => {
   it("lets only an admin start an update, and refuses it when the host user turned it off", async () => {
     let allowed = true;
@@ -1076,12 +1121,12 @@ describe("Team API protocol 7 negotiation", () => {
     };
     const old = await read("6");
     const current = await read("7");
-    expect(TEAM_CURRENT_CAPABILITIES).toHaveLength(69);
+    expect(TEAM_CURRENT_CAPABILITIES).toHaveLength(71);
     expect(legacyTeamCapabilities(TEAM_CURRENT_CAPABILITIES)).toHaveLength(63);
     // This fixture omits optional services. Their capabilities must not be advertised.
     expect(old.capabilities).toEqual(legacyTeamCapabilities(current.capabilities));
     expect(old.capabilities.length).toBeLessThanOrEqual(63);
-    expect(current.capabilities.length).toBeLessThanOrEqual(69);
+    expect(current.capabilities.length).toBeLessThanOrEqual(71);
     expect(old.capabilities).not.toContain("local-providers-v3");
     expect(old.capabilities).not.toContain("agent-session-settings-v1");
     expect(old.capabilities).not.toContain("agent-memories-v1");

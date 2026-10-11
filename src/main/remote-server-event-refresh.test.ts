@@ -1,5 +1,5 @@
 // @vitest-environment node
-import type { AgentEvent } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentSummary } from "@openbot/contracts/ipc";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { runCauseEffect } from "../backend/effect-boundary";
@@ -42,7 +42,27 @@ function queueInvalidated(agentId: string): AgentEvent {
  * `nextRequest` and `nextEmit` are the two observable things this class does; waiting on either is
  * how these tests avoid waiting on a clock.
  */
-function harness() {
+function agent(id: string): AgentSummary {
+  return {
+    id,
+    name: id,
+    title: "",
+    description: "",
+    notifications: true,
+    provider: "codex",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    threadId: null,
+    workspacePath: `/tmp/${id}`,
+    preview: "",
+    updatedAt: null,
+    avatarSeed: id,
+    avatarHue: null,
+    avatarUrl: null,
+  };
+}
+
+function harness(listsWorkers = false) {
   const paths: string[] = [];
   const replies: { resolve: (value: unknown) => void; reject: (error: Error) => void }[] = [];
   const emitted: { serverId: string; event: AgentEvent; bufferedLive?: boolean }[] = [];
@@ -64,6 +84,7 @@ function harness() {
   const refresh = new RemoteEventRefresh({
     request,
     hasServer: () => true,
+    listsWorkers: () => listsWorkers,
     emit: (serverId, event, bufferedLive) => {
       emitted.push({ serverId, event, bufferedLive });
       wake(emitWaiters);
@@ -105,6 +126,24 @@ describe("RemoteEventRefresh", () => {
     replies[0]?.resolve([]);
     await pending;
     expect(emitted).toHaveLength(action === "event" ? 1 : 0);
+  });
+
+  it("marks the host's background workers and sends the roster again when they change", async () => {
+    const { refresh, paths, replies, emitted } = harness(true);
+    const roster = [agent("lead"), agent("worker")];
+    const forwarded = runCauseEffect(refresh.forward("server", { type: "agents-changed", agents: roster }));
+    replies[0]?.resolve({ agentIds: ["worker"] });
+    await forwarded;
+    const reread = runCauseEffect(refresh.markWorkers("server", roster));
+    replies[1]?.resolve({ agentIds: [] });
+    expect(await reread).toEqual(roster);
+    expect({ paths, events: emitted.map((entry) => entry.event) }).toEqual({
+      paths: ["/v1/host/background-workers", "/v1/host/background-workers"],
+      events: [
+        { type: "agents-changed", agents: roster },
+        { type: "agents-changed", agents: [agent("lead"), { ...agent("worker"), backgroundWorker: true }] },
+      ],
+    });
   });
 
   it("holds a burst to one fetch in flight, then refetches once for what arrived during it", async () => {

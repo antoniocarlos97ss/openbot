@@ -448,6 +448,7 @@ function registerIpcHandlers({
   busyMessageMode,
   agentMemoryLimit,
   remoteSessionReuse,
+  progressUpdates,
   remoteSessionCache,
   agentInitialization,
   sidebarLayout,
@@ -577,7 +578,7 @@ function registerIpcHandlers({
       agentTemplates,
       remoteServers,
     }),
-    ...hostAdminIpcHandlers({ host, remoteServers }),
+    ...hostAdminIpcHandlers({ host, remoteServers, progressUpdates }),
     ...providerAdminIpcHandlers({
       service,
       credentials: providerCredentials,

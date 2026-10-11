@@ -141,6 +141,11 @@ export function decodeAgentSummaries(value: unknown): AgentSummary[] {
   return value.map(decodeAgentSummary);
 }
 
+/** `background-workers-v1`: the ids of the host's background workers. */
+export function decodeBackgroundWorkerIds(value: unknown): string[] {
+  return guardedListDecoder(isString, "background worker list")(decodeRecord(value, "background worker list").agentIds);
+}
+
 export function decodeInstalledSkillsFromHost(value: unknown): InstalledSkill[] {
   return decodeInstalledSkills(value);
 }

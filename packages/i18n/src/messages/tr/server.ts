@@ -258,6 +258,13 @@ export const messages = {
   "server.settings.setUp": "Ayarla",
   "server.settings.notifications": "Bildirimler",
   "server.settings.muteNotifications": "Bildirimleri sessize al",
+  "server.settings.agentsSection": "Ajanlar",
+  "server.settings.progressUpdates": "Ajanlar çalışırken ilerleme güncellemeleri",
+  "server.settings.progressUpdatesDescription":
+    "Bu sunucudaki ajanlar uzun bir görevin önemli adımlarında sohbette kısa güncellemeler gösterir ve yönlendirilen bir mesaja hemen yanıt verir.",
+  "server.settings.backgroundWorkers": "Arka plan çalışanları",
+  "server.settings.backgroundWorkersDescription":
+    "Ajanlar uzun bir görevi geçici bir çalışana verip sohbete devam edebilir. Çalışan, çalışırken kenar çubuğunda görünür ve sonucunu gönderince kaldırılır.",
   "server.settings.muteDescription":
     "Bu sunucudan gelen masaüstü bildirimlerini ve MacBook çentik güncellemelerini durdurun.",
   "server.settings.mutedUntilDescription": "{until}. Şimdi sesi açmak için kapatın.",

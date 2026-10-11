@@ -36,6 +36,7 @@ import {
   EVENTS_CAPABILITY,
   HOST_ADMIN_CAPABILITY,
   HOST_MEMBER_UPDATE_CAPABILITY,
+  HOST_PROGRESS_UPDATES_CAPABILITY,
   HOST_RELEASE_CAPABILITY,
   HOST_UPDATE_CAPABILITY,
   HOSTED_SITES_CAPABILITY,
@@ -130,6 +131,7 @@ import { routeAgentMemoryPage } from "./team-api/route-agent-memories";
 import { routeAgentPublish } from "./team-api/route-agent-publish";
 import { routeAgentSessionSettings } from "./team-api/route-agent-session-settings";
 import { routeAgents } from "./team-api/route-agents";
+import { routeBackgroundWorkers } from "./team-api/route-background-workers";
 import { routeBrowser } from "./team-api/route-browser";
 import { routeChannels } from "./team-api/route-channels";
 import { routeContextReset } from "./team-api/route-context-reset";
@@ -137,6 +139,7 @@ import { routeDirect } from "./team-api/route-direct";
 import { routeEvents } from "./team-api/route-events";
 import { routeFiles } from "./team-api/route-files";
 import { routeHostAdmin } from "./team-api/route-host-admin";
+import { routeHostProgressUpdates } from "./team-api/route-host-progress-updates";
 import { routeHostUpdate } from "./team-api/route-host-update";
 import { routeHostedSites } from "./team-api/route-hosted-sites";
 import { routeLiveActivityPush } from "./team-api/route-live-activity-push";
@@ -717,8 +720,10 @@ export class TeamApiServer {
       if ((await routeAcpRegistry(context, this.#options.admin)) === "handled") return;
       if ((await routeProviders(context, this.#options.admin)) === "handled") return;
       if ((await routeHostAdmin(context, this.#options.admin)) === "handled") return;
+      if ((await routeHostProgressUpdates(context, this.#options.admin)) === "handled") return;
       if ((await routeHostUpdate(context, this.#options.admin)) === "handled") return;
       if ((await routeContextReset(context, this.#options.agents, hidden)) === "handled") return;
+      if ((await routeBackgroundWorkers(context, this.#options.agents, hidden)) === "handled") return;
       if ((await routeAgentMemoryPage(context, this.#options.agents, hidden)) === "handled") return;
       if ((await routeWorkspaceDirectory(context, this.#options.agents, hidden)) === "handled") return;
       if ((await this.#routeEvents(context)) === "handled") return;
@@ -1501,6 +1506,7 @@ export class TeamApiServer {
           return this.#options.admin?.providers !== undefined;
         if (capability === PROVIDERS_SIGN_IN_V3_CAPABILITY) return this.#options.admin?.providers?.pasteSignIn === true;
         if (capability === HOST_ADMIN_CAPABILITY) return this.#options.admin?.identity !== undefined;
+        if (capability === HOST_PROGRESS_UPDATES_CAPABILITY) return this.#options.admin?.progressUpdates !== undefined;
         if (capability === HOST_RELEASE_CAPABILITY) return this.#options.admin?.release !== undefined;
         if (capability === HOST_UPDATE_CAPABILITY || capability === HOST_MEMBER_UPDATE_CAPABILITY)
           return this.#options.admin?.update !== undefined;

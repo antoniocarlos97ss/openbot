@@ -37,6 +37,7 @@ export function toAgentProfile(stored: AgentSummary): AgentProfile {
     computerUse: stored.computerUse,
     allowAutomation: stored.allowAutomation,
     busyMessageMode: stored.busyMessageMode,
+    backgroundWorker: stored.backgroundWorker,
     threadId: stored.threadId,
     workspacePath: stored.workspacePath,
     avatarSeed: stored.avatarSeed,

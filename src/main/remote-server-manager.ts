@@ -52,7 +52,11 @@ import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { AGENT_IMPORT_ROUTES } from "@openbot/contracts/team-protocol/agent-import-v1";
 import { decodeBrowserViewSessionResponse } from "@openbot/contracts/team-protocol/browser-view-v1";
-import { TEAM_MEMBER_LEAVE_CAPABILITY, type TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
+import {
+  BACKGROUND_WORKERS_CAPABILITY,
+  TEAM_MEMBER_LEAVE_CAPABILITY,
+  type TeamCurrentCapability,
+} from "@openbot/contracts/team-protocol/current";
 import type { HostRestartEvent } from "@openbot/contracts/team-protocol/host-update-v1";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { sourceText } from "@openbot/i18n/source";
@@ -262,6 +266,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       hasServer: (serverId) => this.#store.has(serverId),
       emit: (serverId, event, bufferedLive) =>
         bufferedLive ? this.emit("agent", serverId, event, true) : this.emit("agent", serverId, event),
+      listsWorkers: (serverId) => this.supportsCapability(serverId, BACKGROUND_WORKERS_CAPABILITY),
     });
     this.#presence = new RemotePresenceCache({
       fetchSnapshot: (serverId) => this.request(serverId, TEAM_API_ROUTES.team.presence, decodeTeamPresenceSnapshot),
@@ -560,6 +565,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   // What the host on the other end negotiated it can do. An IPC handler asks before calling a route
   // an older host does not serve, so this answers false until compatibility is known rather than
   // waiting for it -- a capability nobody has confirmed is one you cannot use yet.
+  /** Marks the host's background workers in a roster read outside the event stream. */
+  markBackgroundWorkers(serverId: string, agents: AgentSummary[]): Effect.Effect<AgentSummary[]> {
+    return this.#refresh.markWorkers(serverId, agents);
+  }
+
   supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean {
     return this.#connections.compatibilityFor(serverId)?.capabilities.includes(capability) ?? false;
   }

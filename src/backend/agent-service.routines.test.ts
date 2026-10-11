@@ -520,6 +520,243 @@ describe.sequential("AgentService: routines", () => {
     );
   });
 
+  it("keeps a progress update in the chat before the final answer of the turn", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores(root);
+    let progressUpdates = false;
+    service = createTestService({
+      store,
+      mailbox,
+      progressUpdates: () => progressUpdates,
+      preferredProvider: "codex",
+      clientFactory: (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+    });
+    await runCauseEffect(service.initialize());
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Audit the release." }));
+    await waitForQueue(service, "chief", (queue) => queue.deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The progress update turn did not start.");
+
+    const update = { text: "Found 3 risky migrations." };
+    await expectOpenBotToolFailure(client, threadId, "post_update", update, "turned progress updates off", turnId);
+    progressUpdates = true;
+    const posted = await callOpenBotTool(client, threadId, "post_update", update, turnId, "update-call");
+    expect(openBotToolPayload(posted.result)).toMatchObject({ status: "shown" });
+    // A retried call adds no second update.
+    await callOpenBotTool(client, threadId, "post_update", update, turnId, "update-call");
+    const itemId = `${turnId}:answer`;
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId,
+        item: { id: itemId, type: "agentMessage", text: "The release is safe." },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitForQueue(service, "chief", (queue) => queue.deliveries[0]?.status === "completed");
+
+    // The saved rows, not the memory copy: the turn-completion write rewrites the thread.
+    const saved = store.database.readConversation(
+      "chief",
+      store.list().find((agent) => agent.id === "chief")?.threadId ?? null,
+    );
+    const answers = saved.messages.filter((message) => message.author === "assistant" && message.turnId === turnId);
+    expect(answers.map((message) => message.text)).toEqual(["Found 3 risky migrations.", "The release is safe."]);
+  });
+
+  it("gives a long task to a background worker, returns its result, and removes the worker", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores(root);
+    let backgroundWorkers = false;
+    service = createTestService({
+      store,
+      mailbox,
+      backgroundWorkers: () => backgroundWorkers,
+      backgroundWorkersFile: join(root, "background-workers.json"),
+      preferredProvider: "codex",
+      clientFactory: (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+    });
+    await runCauseEffect(service.initialize());
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Audit the release." }));
+    await waitForQueue(service, "chief", (queue) => queue.deliveries[0]?.status === "running");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The requester turn did not start.");
+
+    const task = { name: "Release audit", task: "Audit the release." };
+    await expectOpenBotToolFailure(
+      client,
+      threadId,
+      "start_background_task",
+      task,
+      "turned background workers off",
+      turnId,
+    );
+    backgroundWorkers = true;
+    const started = openBotToolPayload(
+      (await callOpenBotTool(client, threadId, "start_background_task", task, turnId, "worker-call")).result,
+    );
+    expect(started).toMatchObject({ status: "started", name: "Release audit" });
+    const workerId = String(started.workerAgentId);
+    // A retried call starts no second worker.
+    const retried = openBotToolPayload(
+      (await callOpenBotTool(client, threadId, "start_background_task", task, turnId, "worker-call")).result,
+    );
+    expect(retried).toMatchObject({ workerAgentId: workerId });
+    expect(service.listAgents().filter((agent) => agent.name === "Release audit")).toEqual([
+      expect.objectContaining({ id: workerId, backgroundWorker: true }),
+    ]);
+
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitForQueue(service, workerId, (queue) => queue.deliveries[0]?.status === "running");
+    const workerThreadId = store.activeProviderSession(workerId)?.externalSessionId;
+    const workerTurnId = service.listQueue(workerId).deliveries[0]?.turnId;
+    if (!workerThreadId || !workerTurnId) throw new Error("The worker turn did not start.");
+    // A worker cannot start a worker of its own.
+    await expectOpenBotToolFailure(
+      client,
+      workerThreadId,
+      "start_background_task",
+      task,
+      "cannot start another worker",
+      workerTurnId,
+    );
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId: workerThreadId,
+        turnId: workerTurnId,
+        item: { id: `${workerTurnId}:answer`, type: "agentMessage", text: "The release is safe." },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId: workerThreadId, turn: { id: workerTurnId, status: "completed" } }),
+    );
+
+    await waitFor(() => service?.listAgents().some((agent) => agent.id === workerId) === false);
+    const result = mailbox
+      .listQueue("chief")
+      .deliveries.find((delivery) => delivery.sender.kind === "agent" && delivery.sender.agentId === workerId);
+    expect(result?.text).toBe("The release is safe.");
+    await waitFor(
+      async () => JSON.parse(await readFile(join(root, "background-workers.json"), "utf8")).workers.length === 0,
+    );
+  });
+
+  it("tells the requester when a background worker stops with no result, and removes the worker", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores(root);
+    service = createTestService({
+      store,
+      mailbox,
+      backgroundWorkers: () => true,
+      preferredProvider: "codex",
+      clientFactory: (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+    });
+    await runCauseEffect(service.initialize());
+    await runCauseEffect(service.sendMessage({ agentId: "chief", text: "Audit the release." }));
+    await waitForQueue(service, "chief", (queue) => queue.deliveries[0]?.status === "running");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The requester turn did not start.");
+    const started = openBotToolPayload(
+      (
+        await callOpenBotTool(
+          client,
+          threadId,
+          "start_background_task",
+          { name: "Release audit", task: "Audit the release." },
+          turnId,
+        )
+      ).result,
+    );
+    const workerId = String(started.workerAgentId);
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitForQueue(service, workerId, (queue) => queue.deliveries[0]?.status === "running");
+    const workerThreadId = store.activeProviderSession(workerId)?.externalSessionId;
+    const workerTurnId = service.listQueue(workerId).deliveries[0]?.turnId;
+    if (!workerThreadId || !workerTurnId) throw new Error("The worker turn did not start.");
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId: workerThreadId, turn: { id: workerTurnId, status: "failed" } }),
+    );
+
+    await waitFor(() => service?.listAgents().some((agent) => agent.id === workerId) === false);
+    const notice = mailbox
+      .listQueue("chief")
+      .deliveries.find((delivery) => delivery.sender.kind === "agent" && delivery.sender.agentId === workerId);
+    expect(notice?.text).toContain("stopped before it had a result");
+  });
+
+  it("refuses a progress update in a turn that no user message started", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores(root);
+    service = createTestService({
+      store,
+      mailbox,
+      progressUpdates: () => true,
+      preferredProvider: "codex",
+      clientFactory: (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+    });
+    await runCauseEffect(service.initialize());
+    const agent = await runCauseEffect(store.getOrCreate("chief"));
+    const routine = service.createRoutine({
+      agentId: agent.id,
+      name: "Nightly check",
+      instruction: "Check the build.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    await runCauseEffect(service.testRoutine({ agentId: agent.id, routineId: routine.id }));
+    await waitForQueue(service, agent.id, (queue) => queue.deliveries[0]?.status === "running");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
+    const turnId = service.listQueue(agent.id).deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The routine turn did not start.");
+
+    await expectOpenBotToolFailure(
+      client,
+      threadId,
+      "post_update",
+      { text: "Checking the build." },
+      "only in a turn that works on a user message",
+      turnId,
+    );
+  });
+
   it("rejects an agent reaction when the current turn was not started by the user", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores(root);

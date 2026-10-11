@@ -71,6 +71,7 @@ export const messages = {
   "error.team.skillsUnsupported": "Это подключение не поддерживает навыки.",
   "error.team.hostIdentityUnsupported": "Это подключение не поддерживает изменение идентификатора сервера.",
   "error.team.hostUpdateUnsupported": "Это подключение не поддерживает обновление хоста.",
+  "error.team.progressUpdatesUnsupported": "Это подключение не поддерживает настройку обновлений о ходе работы.",
   "error.team.attachmentNameRequired": "Нужно безопасное имя вложения.",
   "error.team.attachmentNotFound": "Вложение не найдено.",
   "error.team.sharedFileTooLarge": "Общий файл превышает лимит 100 МБ.",

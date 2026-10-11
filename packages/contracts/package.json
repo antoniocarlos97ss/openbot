@@ -104,6 +104,8 @@
     "./team-protocol/agent-session-settings-v1": "./src/team-protocol/agent-session-settings-v1.ts",
     "./team-protocol/providers-v5": "./src/team-protocol/providers-v5.ts",
     "./team-protocol/host-admin-v1": "./src/team-protocol/host-admin-v1.ts",
+    "./team-protocol/host-progress-updates-v1": "./src/team-protocol/host-progress-updates-v1.ts",
+    "./team-protocol/background-workers-v1": "./src/team-protocol/background-workers-v1.ts",
     "./team-protocol/hosted-sites-v1": "./src/team-protocol/hosted-sites-v1.ts",
     "./team-protocol/host-release-v1": "./src/team-protocol/host-release-v1.ts",
     "./team-protocol/host-member-update-v1": "./src/team-protocol/host-member-update-v1.ts",

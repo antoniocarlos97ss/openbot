@@ -73,6 +73,7 @@ export const messages = {
   "error.team.skillsUnsupported": "Esta conexão não oferece suporte a habilidades.",
   "error.team.hostIdentityUnsupported": "Esta conexão não oferece suporte a alterações na identidade do servidor.",
   "error.team.hostUpdateUnsupported": "Esta conexão não oferece suporte a atualizações do computador anfitrião.",
+  "error.team.progressUpdatesUnsupported": "Esta conexão não permite mudar as atualizações de progresso.",
   "error.team.attachmentNameRequired": "É necessário informar um nome seguro para o anexo.",
   "error.team.attachmentNotFound": "Anexo não encontrado.",
   "error.team.sharedFileTooLarge": "O arquivo compartilhado excede o limite de 100 MB.",

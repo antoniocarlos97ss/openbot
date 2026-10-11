@@ -465,6 +465,38 @@ export function createServerGeneralSection(
             </Item>
           </ItemGroup>
         </Show>
+        <Show when={props.progressUpdates}>
+          {(progressUpdates) => (
+            <SettingsSection title={t("server.settings.agentsSection")}>
+              <ItemGroup class="settings-modal-card">
+                <SwitchField
+                  size="default"
+                  checked={progressUpdates().preference.enabled}
+                  disabled={!actionsAvailable() || Boolean(busy())}
+                  onChange={(enabled) =>
+                    void run("progress-updates", () =>
+                      progressUpdates().onChange({ ...progressUpdates().preference, enabled }),
+                    )
+                  }
+                  label={t("server.settings.progressUpdates")}
+                  description={t("server.settings.progressUpdatesDescription")}
+                />
+                <SwitchField
+                  size="default"
+                  checked={progressUpdates().preference.backgroundWorkers}
+                  disabled={!actionsAvailable() || Boolean(busy())}
+                  onChange={(backgroundWorkers) =>
+                    void run("background-workers", () =>
+                      progressUpdates().onChange({ ...progressUpdates().preference, backgroundWorkers }),
+                    )
+                  }
+                  label={t("server.settings.backgroundWorkers")}
+                  description={t("server.settings.backgroundWorkersDescription")}
+                />
+              </ItemGroup>
+            </SettingsSection>
+          )}
+        </Show>
         <Show when={props.onSetMuted && props.onSetNotificationLevel}>
           <SettingsSection title={t("server.settings.notifications")}>
             <ItemGroup class="settings-modal-card">

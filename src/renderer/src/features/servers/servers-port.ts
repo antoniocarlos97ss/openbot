@@ -26,7 +26,10 @@ export interface ServersPort {
   events: OpenBotDesktopApi["events"];
   auth: Pick<OpenBotDesktopApi["auth"], "onEvent">;
   browser: Pick<OpenBotDesktopApi["browser"], "setVisible">;
-  hostAdmin: Pick<OpenBotDesktopApi["hostAdmin"], "getUpdateStatus" | "updateIdentity">;
+  hostAdmin: Pick<
+    OpenBotDesktopApi["hostAdmin"],
+    "getProgressUpdates" | "getUpdateStatus" | "setProgressUpdates" | "updateIdentity"
+  >;
   hostedServers: Pick<OpenBotDesktopApi["hostedServers"], "list" | "wake">;
   host: Pick<
     OpenBotDesktopApi["host"],

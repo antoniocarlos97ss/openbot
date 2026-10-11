@@ -33,7 +33,13 @@ import type { ChannelService } from "../channel-service";
 import type { ProviderSession } from "../database/provider-sessions";
 import type { MailboxStore } from "../mailbox-store";
 import { agentMcpServers } from "../mcp-provider-shapes";
-import { CHAT_VISUAL_PREVIEW_DEFAULT_WIDTH, htmlPreviewToolSchema, htmlRenderToolSchema } from "../openbot-tools";
+import {
+  CHAT_VISUAL_PREVIEW_DEFAULT_WIDTH,
+  htmlPreviewToolSchema,
+  htmlRenderToolSchema,
+  postUpdateToolSchema,
+  startBackgroundTaskToolSchema,
+} from "../openbot-tools";
 import { type AppServerRequest, type DynamicToolCallParams, type DynamicToolResult, isRecord } from "../protocol";
 import { handleRoutineFlowTool, type RoutineFlowTools } from "../routine-flows/routine-flow-tools";
 import type { StoredStateFailure } from "../stored-state-effects";
@@ -43,11 +49,17 @@ import { type ApprovalAutomationPolicy, NO_APPROVAL_AUTOMATION } from "./approva
 import type { AttachmentGateway } from "./attachment-gateway";
 import type { AttentionRegistry } from "./attention-registry";
 import { loadAvatarFile } from "./avatar-file";
+import { BACKGROUND_WORKER_LIMIT, type BackgroundWorker, backgroundTaskText } from "./background-workers";
 import type { BrowserUploads } from "./browser-uploads";
 import type { ChatVisualPreviewHost } from "./chat-visual-preview";
 import type { ConversationRuntime } from "./conversation-runtime";
 import { handleDataTool } from "./data-tools";
-import { responseAttachmentMessageId, visualReplyFileName, visualReplyMessageId } from "./delivery-content";
+import {
+  progressUpdateMessageId,
+  responseAttachmentMessageId,
+  visualReplyFileName,
+  visualReplyMessageId,
+} from "./delivery-content";
 import type { DrainScheduler } from "./drain-scheduler";
 import { HistoryTools } from "./history-tools";
 import type { HostedSiteCoordinator } from "./hosted-site-coordinator";
@@ -105,6 +117,19 @@ export interface OpenBotToolRouterHooks {
   turnActivity(agentId: string, turnId: string | null): { startedAt: number | null; lastEventAt: number | null };
   /** Records a no-update tool call for the turn; null when no routine run started the turn. */
   requestNoUpdate(agentId: string, threadId: string, turnId: string): "quiet" | "shown" | null;
+  /** The user's switch for `post_update`. */
+  progressUpdates(): boolean;
+  /** The user's switch for `start_background_task`. */
+  backgroundWorkers(): boolean;
+  /** The record of an agent that is a background worker; undefined for every other agent. */
+  backgroundWorker(agentId: string): BackgroundWorker | undefined;
+  backgroundWorkerCount(requesterAgentId: string): number;
+  /** Creates a worker, then queues the task for it from the requester. A retried call returns the same worker. */
+  startBackgroundWorker(
+    input: Omit<CreateAgentInput, "initialMessage">,
+    task: { requesterAgentId: string; text: string; idempotencyKey: string },
+    configure?: (agent: AgentSummary) => Effect.Effect<AgentSummary, ToolOperationFailed>,
+  ): Effect.Effect<AgentSummary, ToolOperationFailed>;
 }
 
 export interface OpenBotToolRouterOptions {
@@ -730,6 +755,16 @@ export class OpenBotToolRouter {
 
     if (params.tool === "react_to_user_message") return yield* this.#react(params, senderAgentId);
 
+    if (params.tool === "start_background_task") {
+      if (channelId) return openBotToolFailure("Use channel tools to give channel work to a member.");
+      return yield* this.#startBackgroundTask(params, senderAgentId);
+    }
+
+    if (params.tool === "post_update") {
+      if (channelId) return openBotToolFailure("Use channel tools to report channel work.");
+      return yield* this.#postUpdate(params, senderAgentId, executionThreadId);
+    }
+
     return yield* this.#sendMessage(params, senderAgentId);
   });
 
@@ -790,6 +825,58 @@ export class OpenBotToolRouter {
       const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
       if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
       yield* this.#mailbox.discardStagedGeneratedAttachments([attachment.id]).pipe(toToolOperationFailed);
+      throw error;
+    }
+    this.#conversation.publishConversation(snapshot);
+    return openBotToolResult({ status: "shown", messageId });
+  });
+
+  /**
+   * `post_update`: adds a short answer to the running turn, so the user reads a checkpoint while the
+   * agent works. Only a turn that holds a user message can post one: routine and teammate work stays
+   * quiet until its result. A retried call finds its message by id.
+   */
+  readonly #postUpdate = Effect.fn("OpenBotToolRouter.postUpdate")(function* (
+    this: OpenBotToolRouter,
+    params: DynamicToolCallParams,
+    senderAgentId: string,
+    executionThreadId: string,
+  ) {
+    const parsed = postUpdateToolSchema.safeParse(params.arguments);
+    if (!parsed.success) return openBotToolFailure(profileToolErrorMessage(parsed.error));
+    if (!this.#hooks.progressUpdates())
+      return openBotToolFailure("The user turned progress updates off. Do not call this tool again in this turn.");
+    const forUser = this.#mailbox
+      .findDeliveriesByTurn(senderAgentId, params.turnId)
+      .some((candidate) => candidate.delivery.sender.kind === "user");
+    if (!forUser) return openBotToolFailure("Use this tool only in a turn that works on a user message.");
+    const messageId = progressUpdateMessageId(params.threadId, params.turnId, params.callId);
+    // In place, as `html_render` does: a concurrent tool that saves the live snapshot keeps this message.
+    const snapshot = this.#conversation.ensureSnapshot(senderAgentId, executionThreadId);
+    if (snapshot.messages.some(({ id }) => id === messageId)) return openBotToolResult({ status: "shown", messageId });
+    const message: ConversationMessage = {
+      id: messageId,
+      turnId: params.turnId,
+      author: "assistant",
+      source: "assistant",
+      text: parsed.data.text,
+      createdAt: new Date().toISOString(),
+      status: "completed",
+    };
+    snapshot.messages.push(message);
+    sortConversationMessages(snapshot.messages);
+    try {
+      snapshot.revision = this.#store.database.persistConversationChanges({
+        agentId: senderAgentId,
+        threadId: executionThreadId,
+        activeTurnId: snapshot.activeTurnId,
+        changedMessages: [message],
+        eventType: "response.update-posted",
+        detail: { turnId: params.turnId, messageId },
+      });
+    } catch (error) {
+      const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
+      if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
       throw error;
     }
     this.#conversation.publishConversation(snapshot);
@@ -1025,6 +1112,77 @@ export class OpenBotToolRouter {
       this.#mailboxSync.syncMailboxMessages(snapshot);
       this.#conversation.emitConversation(snapshot);
       return openBotToolResult({ status: "reacted", messageId: delivery.delivery.id, emoji: args.emoji });
+    },
+    Effect.catchDefect((cause) => Effect.fail(new ToolOperationFailed({ cause }))),
+    Effect.uninterruptible,
+  );
+
+  /**
+   * `start_background_task`: creates a temporary worker with the caller's model, access and sidebar
+   * section, and queues the task from the caller. The caller's turn can end at once: the worker's
+   * result comes back as a teammate answer, and the agent service removes the worker after it.
+   */
+  readonly #startBackgroundTask = Effect.fn("OpenBotToolRouter.startBackgroundTask")(
+    function* (
+      this: OpenBotToolRouter,
+      params: DynamicToolCallParams,
+      senderAgentId: string,
+    ): Effect.fn.Return<OpenBotToolResponse, ToolOperationFailed> {
+      const parsed = startBackgroundTaskToolSchema.safeParse(params.arguments);
+      if (!parsed.success) return openBotToolFailure(profileToolErrorMessage(parsed.error));
+      const args = parsed.data;
+      if (!this.#hooks.backgroundWorkers())
+        return openBotToolFailure("The user turned background workers off. Do the task yourself.");
+      if (this.#hooks.backgroundWorker(senderAgentId))
+        return openBotToolFailure("A background worker cannot start another worker. Do the task yourself.");
+      // The result comes back to the agent's own chat, not to an external conversation such as Slack.
+      const external = this.#mailbox
+        .findDeliveriesByTurn(senderAgentId, params.turnId)
+        .some(({ delivery }) => this.#mailbox.messagingOrigin(delivery.id) !== null);
+      if (external) return openBotToolFailure("Do the task yourself in an external conversation.");
+      const idempotencyKey = toolCallIdempotencyKey(params);
+      if (this.#hooks.backgroundWorkerCount(senderAgentId) >= BACKGROUND_WORKER_LIMIT)
+        return openBotToolFailure(
+          `You already have ${BACKGROUND_WORKER_LIMIT} workers. Wait for a result, or do the task yourself.`,
+        );
+      const caller = this.#requireAgent(senderAgentId);
+      // The worker runs where the caller runs. When the provider no longer lists the caller's model,
+      // the worker starts where an agent the user creates does.
+      const model = this.#hooks
+        .listModels()
+        .find((candidate) => candidate.provider === caller.provider && candidate.id === caller.model);
+      const sectionId = this.#sidebarLayout?.getSnapshot().agentAssignments[senderAgentId] ?? null;
+      // As with `create_agent`, a caller without Full access or Computer Use passes its limits on.
+      const limits: Pick<UpdateAgentInput, "access" | "computerUse"> = {
+        ...(workspaceAccessEnforced(caller) ? { access: "workspace" } : {}),
+        ...(agentComputerUseEnabled(caller) ? {} : { computerUse: false }),
+      };
+      const create = (assign?: (agentId: string) => Effect.Effect<SidebarLayoutSnapshot, StoredStateFailure>) =>
+        this.#hooks.startBackgroundWorker(
+          {
+            name: args.name,
+            description: args.task.slice(0, INPUT_LIMITS.agentDescription),
+            avatarSeed: randomUUID(),
+            avatarHue: caller.avatarHue,
+            ...(model ? { provider: model.provider, model: model.id, reasoningEffort: caller.reasoningEffort } : {}),
+          },
+          { requesterAgentId: senderAgentId, text: backgroundTaskText(caller, args.task), idempotencyKey },
+          (agent) =>
+            Effect.gen({ self: this }, function* () {
+              if (assign) yield* assign(agent.id).pipe(toToolOperationFailed);
+              if (Object.keys(limits).length === 0) return agent;
+              return yield* this.#store.updateAgent({ agentId: agent.id, ...limits }).pipe(toToolOperationFailed);
+            }),
+        );
+      const sidebar = this.#sidebarLayout;
+      const worker =
+        sidebar && sectionId !== null
+          ? yield* sidebar.withProfileAssignment(sectionId, create).pipe(toToolOperationFailed)
+          : yield* create();
+      const snapshot = this.#conversation.ensureSnapshot(senderAgentId, params.threadId);
+      this.#mailboxSync.syncMailboxMessages(snapshot);
+      this.#conversation.emitConversation(snapshot);
+      return openBotToolResult({ status: "started", workerAgentId: worker.id, name: worker.name });
     },
     Effect.catchDefect((cause) => Effect.fail(new ToolOperationFailed({ cause }))),
     Effect.uninterruptible,

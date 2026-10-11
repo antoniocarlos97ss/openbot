@@ -248,6 +248,13 @@ export const messages = {
   "server.settings.setUp": "設定",
   "server.settings.notifications": "通知",
   "server.settings.muteNotifications": "通知をミュート",
+  "server.settings.agentsSection": "エージェント",
+  "server.settings.progressUpdates": "エージェントの作業中に進捗を表示",
+  "server.settings.progressUpdatesDescription":
+    "このサーバーのエージェントは、長いタスクの主要なステップでチャットに短い進捗を表示し、作業中に送られたメッセージにすぐ答えます。",
+  "server.settings.backgroundWorkers": "バックグラウンドワーカー",
+  "server.settings.backgroundWorkersDescription":
+    "エージェントは長いタスクを一時的なワーカーに任せ、会話を続けられます。ワーカーは作業中にサイドバーに表示され、結果を送ると削除されます。",
   "server.settings.muteDescription": "このサーバーからのデスクトップ通知と MacBook のノッチの更新を停止します。",
   "server.settings.mutedUntilDescription": "{until}。今すぐミュートを解除するにはオフにしてください。",
   "server.settings.notifyAbout": "通知する内容",
